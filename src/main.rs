@@ -1,38 +1,14 @@
-use std::process::exit;
+mod context;
 
-use aws_sdk_route53::{
-    error::{ProvideErrorMetadata, SdkError},
-    types::{Change, ChangeAction, ChangeBatch, ResourceRecord, ResourceRecordSet, RrType},
+use aws_sdk_route53::types::{
+    Change, ChangeAction, ChangeBatch, ResourceRecord, ResourceRecordSet, RrType,
 };
+use context::{AwsErrorContext, ErrorContext};
 use env_logger::Env;
 use log::{Level, debug, error, info};
+use std::process::exit;
 
 const CHECKIP_URL: &'static str = "https://checkip.amazonaws.com/";
-
-// Helper to easily map results into strings
-trait ErrorContext<R> {
-    fn context(self, c: &str) -> Result<R, String>;
-}
-impl<R, E> ErrorContext<R> for Result<R, E>
-where
-    E: ToString,
-{
-    fn context(self, c: &str) -> Result<R, String> {
-        self.map_err(|e| format!("{}: {}", c, e.to_string()))
-    }
-}
-
-trait AwsContext<R> {
-    fn aws_context(self, c: &str) -> Result<R, String>;
-}
-impl<R, E> AwsContext<R> for Result<R, SdkError<E>>
-where
-    E: ProvideErrorMetadata,
-{
-    fn aws_context(self, c: &str) -> Result<R, String> {
-        self.map_err(|e| format!("{}: {}", c, e.message().unwrap_or("Unknown sdk error")))
-    }
-}
 
 #[tokio::main]
 async fn main() {
@@ -102,7 +78,7 @@ async fn get_zone_id(client: &aws_sdk_route53::Client, host: &String) -> Result<
         .hosted_zones()
         .iter()
         .find(|z| z.name() == zone_name)
-        .ok_or(format!("No hosted zone found matching {}.", zone_name))?
+        .ok_or(format!("No hosted zone found matching '{}'", zone_name))?
         .id();
 
     Ok(zone_id.to_string())
@@ -126,7 +102,7 @@ fn build_dns_change_batch(host: String, ip: String) -> Result<ChangeBatch, Strin
         .action(ChangeAction::Upsert)
         .resource_record_set(record_set)
         .build()
-        .context("Failed to build change")?;
+        .context("Failed to build Change")?;
 
     let change_batch = ChangeBatch::builder()
         .changes(change)
