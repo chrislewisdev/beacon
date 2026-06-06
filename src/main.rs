@@ -1,8 +1,11 @@
-use aws_sdk_route53::types::{
-    Change, ChangeAction, ChangeBatch, ResourceRecord, ResourceRecordSet, RrType,
+use std::process::exit;
+
+use aws_sdk_route53::{
+    error::{ProvideErrorMetadata, SdkError},
+    types::{Change, ChangeAction, ChangeBatch, ResourceRecord, ResourceRecordSet, RrType},
 };
 use env_logger::Env;
-use log::{Level, debug, error};
+use log::{Level, debug, error, info};
 
 const CHECKIP_URL: &'static str = "https://checkip.amazonaws.com/";
 
@@ -19,12 +22,28 @@ where
     }
 }
 
+trait AwsContext<R> {
+    fn aws_context(self, c: &str) -> Result<R, String>;
+}
+impl<R, E> AwsContext<R> for Result<R, SdkError<E>>
+where
+    E: ProvideErrorMetadata,
+{
+    fn aws_context(self, c: &str) -> Result<R, String> {
+        self.map_err(|e| format!("{}: {}", c, e.message().unwrap_or("Unknown sdk error")))
+    }
+}
+
 #[tokio::main]
 async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or(Level::Info.to_string())).init();
 
     if let Err(e) = beacon("staticlinkage.dev".to_string()).await {
         error!("{e}");
+        error!("Failed to update DNS. See error logs for details.");
+        exit(1);
+    } else {
+        info!("DNS was successfully updated.");
     }
 }
 
@@ -50,16 +69,51 @@ async fn update_dns(host: String, ip: String) -> Result<(), String> {
     let config = aws_config::load_from_env().await;
     let client = aws_sdk_route53::Client::new(&config);
 
-    // client.get_hosted_zone().id(host.clone()).send().await.context("Unable to find hosted zone")?;
+    let zone_id = get_zone_id(&client, &host).await?;
 
-    // zone.hosted_zone().unwrap().
+    let change_batch = build_dns_change_batch(host, ip)?;
 
+    client
+        .change_resource_record_sets()
+        .hosted_zone_id(zone_id)
+        .change_batch(change_batch)
+        .send()
+        .await
+        .aws_context("Failed to update Route53")?;
+
+    Ok(())
+}
+
+async fn get_zone_id(client: &aws_sdk_route53::Client, host: &String) -> Result<String, String> {
+    let zones = client
+        .list_hosted_zones()
+        .send()
+        .await
+        .aws_context("Failed to list hosted zones")?;
+
+    // Route53 includes a trailing '.' on all zone names.
+    let zone_name = if host.ends_with(".") {
+        host.clone()
+    } else {
+        host.clone() + "."
+    };
+
+    let zone_id = zones
+        .hosted_zones()
+        .iter()
+        .find(|z| z.name() == zone_name)
+        .ok_or(format!("No hosted zone found matching {}.", zone_name))?
+        .id();
+
+    Ok(zone_id.to_string())
+}
+
+fn build_dns_change_batch(host: String, ip: String) -> Result<ChangeBatch, String> {
     let record = ResourceRecord::builder()
         .value(ip)
         .build()
         .context("Failed to build ResourceRecord")?;
 
-    // TODO: support for subdomains
     let record_set = ResourceRecordSet::builder()
         .name(host.clone())
         .r#type(RrType::A)
@@ -79,13 +133,5 @@ async fn update_dns(host: String, ip: String) -> Result<(), String> {
         .build()
         .context("Failed to build ChangeBatch")?;
 
-    client
-        .change_resource_record_sets()
-        .hosted_zone_id(host)
-        .change_batch(change_batch)
-        .send()
-        .await
-        .context("Failed to update DNS records")?;
-
-    Ok(())
+    Ok(change_batch)
 }
