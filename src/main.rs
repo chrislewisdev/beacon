@@ -7,7 +7,8 @@ use clap::Parser;
 use context::{AwsErrorContext, ErrorContext};
 use env_logger::Env;
 use log::{Level, debug, error, info};
-use std::process::exit;
+use tokio::time::{MissedTickBehavior, interval};
+use std::{process::exit, time::Duration};
 
 const CHECKIP_URL: &'static str = "https://checkip.amazonaws.com/";
 
@@ -20,7 +21,7 @@ struct CliArgs {
     #[arg(long)]
     update_root: bool,
     #[arg(long, default_value_t = 0)]
-    interval: u32,
+    interval: u64,
 }
 
 #[tokio::main]
@@ -37,12 +38,27 @@ async fn main() {
         exit(1);
     }
 
-    if let Err(e) = beacon(args.zone_name, domains).await {
-        error!("{e}");
-        error!("Failed to update DNS. See error logs for details.");
-        exit(1);
+    let execute = async || {
+        if let Err(e) = beacon(&args.zone_name, &domains).await {
+            error!("{e}");
+            error!("Failed to update DNS. See error logs for details.");
+            false
+        } else {
+            true
+        }
+    };
+
+    if args.interval == 0 {
+        if !execute().await {
+            exit(1);
+        }
     } else {
-        info!("DNS was successfully updated.");
+        let mut interval = interval(Duration::from_secs(args.interval));
+        interval.set_missed_tick_behavior(MissedTickBehavior::Skip);
+        loop {
+            interval.tick().await;
+            execute().await;
+        }
     }
 }
 
@@ -60,11 +76,13 @@ fn get_domains_to_update(args: &CliArgs) -> Vec<String> {
     domains
 }
 
-async fn beacon(zone_name: String, domains: Vec<String>) -> Result<(), String> {
+async fn beacon(zone_name: &String, domains: &Vec<String>) -> Result<(), String> {
     let ip = get_ip().await.context("Failed to get IP")?;
     debug!("Resolved ip as: {ip}");
 
     update_dns(zone_name, domains, ip).await?;
+
+    info!("DNS for {} was successfully updated.", zone_name);
 
     Ok(())
 }
@@ -78,7 +96,7 @@ async fn get_ip() -> reqwest::Result<String> {
         .to_string())
 }
 
-async fn update_dns(zone_name: String, domains: Vec<String>, ip: String) -> Result<(), String> {
+async fn update_dns(zone_name: &String, domains: &Vec<String>, ip: String) -> Result<(), String> {
     let config = aws_config::load_from_env().await;
     let client = aws_sdk_route53::Client::new(&config);
 
@@ -121,7 +139,7 @@ async fn get_zone_id(client: &aws_sdk_route53::Client, host: &String) -> Result<
     Ok(zone_id.to_string())
 }
 
-fn build_dns_change_batch(domains: Vec<String>, ip: String) -> Result<ChangeBatch, String> {
+fn build_dns_change_batch(domains: &Vec<String>, ip: String) -> Result<ChangeBatch, String> {
     let ip_record = ResourceRecord::builder()
         .value(ip)
         .build()
