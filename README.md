@@ -14,6 +14,10 @@ beacon
     --interval <integer>    if set, repeats every n seconds. otherwise, exits after operation
 ```
 
+## Authentication
+
+Beacon expects to be run in an environment where AWS credentials are already configured - this could be using the AWS CLI SSO, a machine with IAM roles, or access keys. See the [AWS documentation](https://docs.aws.amazon.com/sdkref/latest/guide/access.html) for your options in that regard.
+
 ## Installation
 
 Currently only installation from the source code is supported. This means a Rust installation is required.
