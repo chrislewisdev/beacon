@@ -19,7 +19,7 @@ struct CliArgs {
     subdomain: Vec<String>,
     #[arg(long)]
     update_root: bool,
-    #[arg(long, default_value_t = 300)]
+    #[arg(long, default_value_t = 0)]
     interval: u32,
 }
 
@@ -28,15 +28,7 @@ async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or(Level::Info.to_string())).init();
 
     let args = CliArgs::parse();
-
-    let mut domains: Vec<String> = args
-        .subdomain
-        .iter()
-        .map(|subdomain| format!("{}.{}", subdomain, args.zone_name))
-        .collect();
-    if args.update_root {
-        domains.push(args.zone_name.clone());
-    }
+    let domains = get_domains_to_update(&args);
 
     if domains.len() == 0 {
         error!(
@@ -52,6 +44,20 @@ async fn main() {
     } else {
         info!("DNS was successfully updated.");
     }
+}
+
+fn get_domains_to_update(args: &CliArgs) -> Vec<String> {
+    let mut domains: Vec<String> = args
+        .subdomain
+        .iter()
+        .map(|subdomain| format!("{}.{}", subdomain, args.zone_name))
+        .collect();
+
+    if args.update_root {
+        domains.push(args.zone_name.clone());
+    }
+
+    domains
 }
 
 async fn beacon(zone_name: String, domains: Vec<String>) -> Result<(), String> {
