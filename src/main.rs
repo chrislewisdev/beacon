@@ -13,13 +13,18 @@ use std::{process::exit, time::Duration};
 const CHECKIP_URL: &'static str = "https://checkip.amazonaws.com/";
 
 #[derive(Parser, Debug)]
+#[command(version, about = "Dynamic DNS tool for Route 53")]
 struct CliArgs {
+    /// Name of the domain to update, e.g. your-domain.com
     #[arg(long)]
     zone_name: String,
+    /// One or more subdomains to update. Use repeatedly to add multiple.
     #[arg(long)]
     subdomain: Vec<String>,
+    /// Whether or not to update the root record matching the zone name.
     #[arg(long)]
     update_root: bool,
+    /// Time (in seconds) between updates. Leave as 0 to fire once and exit.
     #[arg(long, default_value_t = 0)]
     interval: u64,
 }
@@ -29,8 +34,8 @@ async fn main() {
     env_logger::Builder::from_env(Env::default().default_filter_or(Level::Info.to_string())).init();
 
     let args = CliArgs::parse();
-    let domains = get_domains_to_update(&args);
 
+    let domains = get_domains_to_update(&args);
     if domains.len() == 0 {
         error!(
             "No domains were specified to update. Either supply at least one --subdomain or specify --update-root to update the root record."
